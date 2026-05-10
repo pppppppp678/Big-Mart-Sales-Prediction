@@ -1,41 +1,67 @@
-import streamlit as st
-import joblib
+import gradio as gr
 import numpy as np
-import pandas as pd
+import joblib
+import os
 
-# १. मोडेल लोड गर्ने
-model = joblib.load('big_mart_model.pkl')
+# मोडेल लोड गर्ने सुरक्षित तरिका
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(BASE_DIR, 'big_mart_model.pkl')
 
-# २. पेज सेटिङ
-st.set_page_config(page_title="Big Mart Sales Predictor", layout="centered")
-st.title("🛒 Big Mart Sales Prediction App")
-st.markdown("Enter the product and outlet details to predict the sales.")
+try:
+    model = joblib.load(model_path)
+except Exception as e:
+    model = None
+    print(f"Model Load Error: {e}")
 
-# ३. इनपुट फर्म
-with st.form("prediction_form"):
-    col1, col2 = st.columns(2)
+def predict_sales(weight, fat, visibility, item_type_idx, mrp, year, size, loc_type, out_type, years):
+    if model is None:
+        return "Error: मोडेल फाइल भेटिएन वा लोड हुन सकेन।"
     
-    with col1:
-        mrp = st.number_input("Item MRP", min_value=0.0, value=150.0)
-        weight = st.number_input("Item Weight", min_value=0.0, value=12.0)
-        visibility = st.number_input("Item Visibility", min_value=0.0, max_value=1.0, value=0.05)
+    try:
+        # क्याटेगोरिकल इन्कोडिङ
+        fat_val = 0 if fat == "Low Fat" else 1
+        size_dict = {"Small": 0, "Medium": 1, "High": 2}
+        size_val = size_dict.get(size, 0)
         
-    with col2:
-        outlet_age = st.number_input("Outlet Age (Years)", min_value=0, max_value=50, value=10)
-        fat_content = st.selectbox("Fat Content", ["Low Fat", "Regular"])
-        outlet_size = st.selectbox("Outlet Size", ["Small", "Medium", "High"])
+        # १० वटा फिचरको सही क्रम (Order)
+        features = np.array([[
+            float(weight), 
+            fat_val, 
+            float(visibility), 
+            int(item_type_idx), 
+            float(mrp), 
+            int(year), 
+            size_val, 
+            int(loc_type), 
+            int(out_type), 
+            int(years)
+        ]])
+        
+        prediction = model.predict(features)
+        return f"अनुमानित बिक्री: रु. {prediction[0]:,.2f}"
+    
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-    submit = st.form_submit_button("Predict Sales")
+# Gradio Interface
+interface = gr.Interface(
+    fn=predict_sales,
+    inputs=[
+        gr.Number(label="Item Weight (तौल)"),
+        gr.Dropdown(["Low Fat", "Regular"], label="Fat Content"),
+        gr.Slider(0, 1, step=0.01, label="Visibility (दृश्यता)"),
+        gr.Dropdown(choices=list(range(16)), label="Item Type (ID: 0-15)"),
+        gr.Number(label="Item MRP (मूल्य)"),
+        gr.Number(label="Establishment Year (स्थापना वर्ष)"),
+        gr.Dropdown(["Small", "Medium", "High"], label="Outlet Size"),
+        gr.Dropdown(choices=[0, 1, 2], label="Location Type (Tier 0-2)"),
+        gr.Dropdown(choices=[0, 1, 2, 3], label="Outlet Type (ID 0-3)"),
+        gr.Number(label="Outlet Age (पसलको उमेर)")
+    ],
+    outputs=gr.Textbox(label="Result"),
+    title="Big Mart Sales Prediction (Final)",
+    description="१० वटै विवरणहरू भर्नुहोस् र सेल्सको भविष्यवाणी हेर्नुहोस्।"
+)
 
-# ४. भविष्यवाणी गर्ने प्रक्रिया
-if submit:
-    # Encoding (तालिम दिँदाकै जस्तो हुनुपर्छ)
-    fat_val = 0 if fat_content == "Low Fat" else 1
-    size_val = {"Small": 0, "Medium": 1, "High": 2}[outlet_size]
-    
-    # फिचर एरे (क्रम: Weight, Fat, Visibility, MRP, Size, Age)
-    features = np.array([[weight, fat_val, visibility, mrp, size_val, outlet_age]])
-    
-    prediction = model.predict(features)
-    
-    st.success(f"💰 Estimated Sales: रु. {prediction[0]:,.2f}")
+if __name__ == "__main__":
+    interface.launch()
